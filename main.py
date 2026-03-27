@@ -1,25 +1,55 @@
-import asyncio
-import websockets
+# main.py
 import os
+import json
+from fastapi import FastAPI, WebSocket
+import uvicorn
 
-PORT = int(os.environ.get("PORT", 10000))
+app = FastAPI()
 
-async def handler(websocket):
+@app.get("/")
+async def root():
+    # Render health check (HEAD/GET) won’t crash the server
+    return {"status": "ok"}
+
+@app.websocket("/")
+async def websocket_endpoint(ws: WebSocket):
+    await ws.accept()
     print("Client connected")
 
     try:
-        async for message in websocket:
-            print("Received:", message)
+        # Step 1: Handshake
+        data = await ws.receive_text()
+        print("Handshake received:", data)
 
-            # Temporary: respond so client doesn't crash
-            await websocket.send('{"status":"ok"}')
+        msg = json.loads(data)
+        if msg.get("type") == "hello":
+            response = {
+                "type": "welcome",
+                "status": "ok",
+                "version": msg.get("version"),
+                "player": {
+                    "username": msg.get("username"),
+                    "id": msg.get("profileId")
+                }
+            }
 
-    except websockets.exceptions.ConnectionClosed:
-        print("Client disconnected")
+            # Send welcome message
+            await ws.send_text(json.dumps(response))
 
-async def main():
-    async with websockets.serve(handler, "0.0.0.0", PORT):
-        print(f"Running on port {PORT}")
-        await asyncio.Future()
+            # Optional: tell client we are ready
+            await ws.send_text(json.dumps({"type": "ready"}))
 
-asyncio.run(main())
+        # Step 2: Keep connection alive
+        while True:
+            msg = await ws.receive_text()
+            print("Received:", msg)
+
+            # For now, echo messages back (stub multiplayer)
+            await ws.send_text(json.dumps({"type": "ack", "data": msg}))
+
+    except Exception as e:
+        print("Client disconnected or error:", e)
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
